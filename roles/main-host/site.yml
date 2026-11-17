@@ -1,0 +1,12 @@
+---
+# Роль main-host: развёртывание компонентов основного хоста (ВМ 1).
+- name: Deploy MAIN monitoring host
+  hosts: main_hosts
+  become: true
+  vars:
+    node_role: main
+    # Значения по умолчанию переопределяются переменными окружения из deploy.sh
+    main_host_ip: "{{ lookup('env', 'MAIN_HOST_IP') | default('192.168.100.10', true) }}"
+    agent_host_ip: "{{ lookup('env', 'AGENT_HOST_IP') | default('192.168.200.20', true) }}"
+  roles:
+    - main-host

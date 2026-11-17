@@ -1,0 +1,21 @@
+---
+# roles/base: базовые переменные
+base_packages:
+  - curl
+  - wget
+  - git
+  - vim
+  - htop
+  - net-tools
+  - iproute2
+  - openssl
+  - gnupg
+  - ca-certificates
+  - apt-transport-https
+  - software-properties-common
+
+# Временная зона стенда (согласованные метки времени в логах и метриках)
+base_timezone: Europe/Moscow
+
+# Отключать ли unattended-upgrades на время развёртывания
+base_disable_unattended: true

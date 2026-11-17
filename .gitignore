@@ -1,0 +1,26 @@
+# Конфиденциальные данные — никогда не коммитить
+.env
+*.pem
+*.key
+*.crt
+*.p12
+certs/
+
+# Служебные файлы Ansible
+*.retry
+.ansible/
+
+# Логи и временные файлы
+*.log
+tmp/
+backup/
+
+# Python
+__pycache__/
+*.pyc
+
+# ОС и редакторы
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

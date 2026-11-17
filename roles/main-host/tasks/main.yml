@@ -1,0 +1,115 @@
+---
+# roles/main-host/tasks: развёртывание компонентов основного хоста
+
+- name: Create monitoring directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ zabbix_dir }}"
+    - "{{ zabbix_dir }}/certs"
+    - "{{ zabbix_dir }}/rsyslog-logs"
+    - "{{ zabbix_dir }}/splunk/etc"
+    - "{{ zabbix_dir }}/splunk/var"
+    - "{{ zabbix_dir }}/backups"
+
+# ---------- Docker Compose стек: Zabbix + PostgreSQL + Splunk + Rsyslog-server ----------
+- name: Copy docker-compose-main.yml to host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../files/{{ compose_file }}"
+    dest: "{{ zabbix_dir }}/{{ compose_file }}"
+    mode: '0644'
+
+- name: Render .env for docker compose stack
+  ansible.builtin.template:
+    src: compose.env.j2
+    dest: "{{ zabbix_dir }}/.env"
+    mode: '0600'
+  no_log: true
+
+- name: Copy TLS certificates into deployment dir
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../certs/"
+    dest: "{{ zabbix_dir }}/certs/"
+    mode: '0644'
+    remote_src: false
+  failed_when: false
+
+- name: Start main-host compose stack (Zabbix, PostgreSQL, Splunk, Rsyslog)
+  community.docker.docker_compose_v2:
+    project_src: "{{ zabbix_dir }}"
+    state: present
+  register: compose_up
+  retries: 3
+  delay: 20
+  until: compose_up is succeeded
+
+# ---------- Rsyslog сервер с TLS на хосте (приём логов от подхостов) ----------
+- name: Install rsyslog with gnutls support
+  ansible.builtin.apt:
+    name:
+      - rsyslog
+      - rsyslog-gnutls
+    state: present
+
+- name: Deploy rsyslog server configuration (TLS listener)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../files/rsyslog-server.conf"
+    dest: /etc/rsyslog.d/10-monitoring-server.conf
+    mode: '0644'
+  notify: Restart rsyslog
+
+- name: Ensure rsyslog service enabled and running
+  ansible.builtin.systemd_service:
+    name: rsyslog
+    state: started
+    enabled: true
+
+# ---------- Smallstep CA (опциональный внутренний центр сертификации) ----------
+- name: Init step-ca via compose profile
+  ansible.builtin.command:
+    cmd: docker compose --profile ca up -d stepca
+    chdir: "{{ zabbix_dir }}"
+  when: stepca_enabled | bool
+  failed_when: false
+
+# ---------- Резервное копирование базы данных ----------
+- name: Install backup script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../scripts/backup-db.sh"
+    dest: /usr/local/bin/backup-db.sh
+    mode: '0755'
+
+- name: Schedule nightly DB backup (cron 03:00)
+  ansible.builtin.cron:
+    name: zabbix-postgres-backup
+    minute: "0"
+    hour: "3"
+    job: "/usr/local/bin/backup-db.sh >> {{ zabbix_dir }}/backups/backup.log 2>&1"
+    user: root
+
+# ---------- Проверки готовности ----------
+- name: Wait for Zabbix Server port 10051
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ zabbix_server_port }}"
+    timeout: 300
+
+- name: Wait for Zabbix Web port {{ zabbix_web_port }}
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ zabbix_web_port }}"
+    timeout: 300
+
+- name: Wait for Splunk Web port {{ splunk_web_port }}
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ splunk_web_port }}"
+    timeout: 600
+
+- name: Wait for Rsyslog TLS port {{ syslog_tls_port }}
+  ansible.builtin.wait_for:
+    host: 0.0.0.0
+    port: "{{ syslog_tls_port | int }}"
+    timeout: 120

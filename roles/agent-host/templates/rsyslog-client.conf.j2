@@ -1,0 +1,36 @@
+# ============================================================
+# Rsyslog TLS-клиент (подхост, ВМ 2) — сгенерировано Ansible.
+# Отправка всех локальных логов на основной хост по TLS (ЛР 3).
+# Шаблоны сертификатов: files/ca.crt, client.crt, client.key
+# ============================================================
+
+module(load="imuxsock")    # приём локальных сообщений (logger, приложения)
+module(load="omgnutls")    # отправка по TLS
+
+global(
+    defaultNetstreamDriver="gtls"
+    workDirectory="/var/lib/rsyslog-imptcp-client"
+    statsRatePeriod="30"
+)
+
+action(
+    type="omfwd"
+    target="{{ main_host_ip }}"
+    port="{{ syslog_tls_port }}"
+    protocol="tcp"
+    StreamDriver="gtls"
+    StreamDriverMode="1"              # принудительный TLS
+    StreamDriverAuthMode="x509/name"  # проверка сертификата сервера
+    StreamDriverPermittedPeers="main-host.monitoring.local"
+    queue(
+        type="DiskAssisted"
+        size="10000"
+        maxdiskqueue="2GB"
+        dequeueBatchSize="64"
+    )
+    action.resumeRetryCount="-1"      # бесконечные повторы при недоступности сервера
+    action.reportSuspension="on"
+)
+
+# Локальная копия критичных сообщений остаётся в /var/log/syslog
+*.*     /var/log/syslog

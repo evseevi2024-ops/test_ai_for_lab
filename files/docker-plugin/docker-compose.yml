@@ -1,0 +1,16 @@
+# Запуск кастомного плагина мониторинга на подхосте (ВМ 2, ЛР 4)
+name: custom-monitor-plugin
+services:
+  plugin:
+    build: .
+    image: lab/custom-monitor-plugin:1.0
+    container_name: custom-monitor-plugin
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8888:8888"   # доступен только локально, забирается агентом
+    environment:
+      PLUGIN_PORT: "8888"
+    networks: [agent-net]
+networks:
+  agent-net:
+    driver: bridge

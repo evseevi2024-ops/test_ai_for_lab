@@ -1,0 +1,92 @@
+---
+# roles/base: базовая настройка ОС + установка Docker
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  tags: [base]
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ base_packages }}"
+    state: present
+  tags: [base]
+
+- name: Set timezone
+  community.general.timezone:
+    tz: "{{ base_timezone }}"
+  tags: [base]
+  ignore_errors: true
+
+- name: Disable unattended-upgrades during deployment
+  ansible.builtin.systemd_service:
+    name: unattended-upgrades
+    enabled: false
+    state: stopped
+  when: base_disable_unattended | bool
+  failed_when: false
+  tags: [base]
+
+- name: Ensure kernel parameters for monitoring (net.core, swappiness)
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_set: true
+    reload: true
+  loop:
+    - { key: net.core.somaxconn, value: '4096' }
+    - { key: vm.swappiness, value: '10' }
+  tags: [base]
+
+# ---------- Docker (официальный репозиторий Docker CE) ----------
+- name: Add Docker GPG key
+  ansible.builtin.apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+  tags: [base, docker]
+
+- name: Add Docker repository
+  ansible.builtin.apt_repository:
+    repo: "deb https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    state: present
+    filename: docker
+  tags: [base, docker]
+
+- name: Install Docker CE and Compose plugin
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+  tags: [base, docker]
+
+- name: Enable and start Docker service
+  ansible.builtin.systemd_service:
+    name: docker
+    state: started
+    enabled: true
+  tags: [base, docker]
+
+- name: Add deploy user to docker group
+  ansible.builtin.user:
+    name: "{{ ansible_user_id | default('ubuntu') }}"
+    groups: docker
+    append: true
+  tags: [base, docker]
+
+# ---------- NTP-синхронизация времени (важно для логов и TLS) ----------
+- name: Ensure chrony is installed for time sync
+  ansible.builtin.apt:
+    name: chrony
+    state: present
+  tags: [base]
+
+- name: Enable and start chrony
+  ansible.builtin.systemd_service:
+    name: chrony
+    state: started
+    enabled: true
+  tags: [base]

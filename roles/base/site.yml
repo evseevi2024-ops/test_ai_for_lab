@@ -1,0 +1,9 @@
+---
+# Роль base: базовая настройка ОС и установка Docker.
+# Применяется к обоим типам узлов (main и agent).
+- name: Base configuration
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - base
