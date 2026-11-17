@@ -1,0 +1,27 @@
+# Шаблон конфигурации OpenSSL для CSR сервера/клиента syslog TLS.
+# Заполняется scripts/generate-certs.sh (CN и SAN подставляются).
+[ req ]
+default_bits       = 2048
+distinguished_name = req_distinguished_name
+string_mask        = utf8only
+default_md         = sha256
+prompt             = no
+req_extensions     = v3_req
+
+[ req_distinguished_name ]
+C  = RU
+ST = Moscow
+L  = Moscow
+O  = MonitoringLab
+OU = Syslog
+CN = __COMMON_NAME__
+
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage         = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth, clientAuth
+subjectAltName   = @alt_names
+
+[ alt_names ]
+DNS.1   = __COMMON_NAME__
+IP.1    = __HOST_IP__

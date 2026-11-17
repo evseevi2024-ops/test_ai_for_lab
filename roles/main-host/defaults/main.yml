@@ -1,0 +1,29 @@
+---
+# roles/main-host: переменные по умолчанию
+zabbix_dir: /opt/monitoring
+compose_file: docker-compose-main.yml
+
+zabbix_web_port: 8080
+splunk_web_port: 8000
+zabbix_server_port: 10051
+syslog_tls_port: "{{ lookup('env', 'SYSLOG_TLS_PORT') | default(6514, true) }}"
+
+# Пароли читаются из окружения (.env загружается deploy.sh)
+zabbix_db_password: "{{ lookup('env', 'ZABBIX_DB_PASSWORD') }}"
+zabbix_admin_password: "{{ lookup('env', 'ZABBIX_ADMIN_PASSWORD') | default('zabbix', true) }}"
+postgres_user: "{{ lookup('env', 'POSTGRES_USER') | default('zabbix', true) }}"
+postgres_password: "{{ lookup('env', 'POSTGRES_PASSWORD') }}"
+postgres_db: "{{ lookup('env', 'POSTGRES_DB') | default('zabbix', true) }}"
+splunk_password: "{{ lookup('env', 'SPLUNK_PASSWORD') }}"
+
+# Опциональный внутренний центр сертификации Smallstep CA
+stepca_enabled: true
+stepca_port: 9000
+
+# Каталог TLS-сертификатов (генерируются scripts/generate-certs.sh)
+certs_dir: "{{ zabbix_dir }}/certs"
+
+# Email/Telegram уведомления (ЛР 5) — заполняются при наличии
+alert_email: ""
+telegram_token: ""
+telegram_chat_id: ""

@@ -1,0 +1,135 @@
+# ============================================================
+# docker-compose-main.yml — стек основного хоста (ВМ 1)
+# Компоненты: PostgreSQL, Zabbix Server, Zabbix Web (Nginx),
+#             Splunk Enterprise, Rsyslog-server (TLS), Smallstep CA.
+# Запускается ролью Ansible main-host из каталога /opt/monitoring.
+# Значения берутся из .env в этом же каталоге (генерируется Ansible).
+# ============================================================
+
+name: monitoring-main
+
+services:
+  # ---------- База данных PostgreSQL ----------
+  postgresql:
+    image: postgres:15
+    container_name: monitoring-postgresql
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-zabbix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-zabbix}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-zabbix}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [monitoring]
+
+  # ---------- Zabbix Server ----------
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:ubuntu-6.4-latest
+    container_name: zabbix-server
+    restart: unless-stopped
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    ports:
+      - "${ZABBIX_SERVER_PORT:-10051}:10051"   # приём метрик от агентов
+    environment:
+      DB_SERVER_HOST: postgresql
+      POSTGRES_USER: ${POSTGRES_USER:-zabbix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-zabbix}
+      ZBX_JAVAGATEWAY_ENABLE: "false"
+    volumes:
+      - /usr/lib/zabbix/alertscripts:/usr/lib/zabbix/alertscripts
+      - /usr/lib/zabbix/externalscripts:/usr/lib/zabbix/externalscripts
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    networks: [monitoring]
+
+  # ---------- Zabbix Web (Nginx + PHP-FPM) ----------
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:ubuntu-6.4-latest
+    container_name: zabbix-web
+    restart: unless-stopped
+    depends_on:
+      - zabbix-server
+      - postgresql
+    ports:
+      - "${ZABBIX_WEB_PORT:-8080}:8080"        # веб-интерфейс (проброшен наружу)
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_PORT: "10051"
+      DB_SERVER_HOST: postgresql
+      POSTGRES_USER: ${POSTGRES_USER:-zabbix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-zabbix}
+      PHP_TZ: Europe/Moscow
+    networks: [monitoring]
+
+  # ---------- Splunk Enterprise (анализ логов) ----------
+  splunk:
+    image: splunk/splunk:9.2
+    container_name: splunk
+    restart: unless-stopped
+    ports:
+      - "${SPLUNK_WEB_PORT:-8000}:8000"        # веб-интерфейс (проброшен наружу)
+      - "8089:8089"                            # management API
+      - "9997:9997"                            # HEC forwarder порт
+    environment:
+      SPLUNK_START_ARGS: "--accept-license"
+      SPLUNK_PASSWORD: ${SPLUNK_PASSWORD}
+      SPLUNK_HEC_TOKEN: ""                     # задайте при включении HEC
+    volumes:
+      - ./splunk/etc:/opt/splunk/etc
+      - ./splunk/var:/opt/splunk/var
+    networks: [monitoring]
+
+  # ---------- Rsyslog сервер с TLS (приём логов от подхостов) ----------
+  rsyslog-server:
+    image: rsyslog/rsyslog:latest
+    container_name: rsyslog-tls-server
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "${SYSLOG_TLS_PORT:-6514}:6514/tcp"    # syslog over TLS (проброшен наружу)
+    volumes:
+      - ./certs:/certs:ro
+      - ./rsyslog-logs:/var/log/remote
+      - ../files/rsyslog-server.conf:/etc/rsyslog.d/10-server.conf:ro
+    command: ["rsyslogd", "-n", "-i", "none", "-I", "/etc/rsyslog.d/10-server.conf"]
+    networks: [monitoring]
+
+  # ---------- Smallstep CA (опциональный внутренний ЦС, профиль ca) ----------
+  stepca:
+    image: smallstep/step-ca:latest
+    container_name: stepca
+    restart: unless-stopped
+    profiles: ["ca"]
+    ports:
+      - "${STEPCA_PORT:-9000}:9000"
+    environment:
+      DOCKER_STEPCA_INIT_NAME: "monitoring-local-ca"
+      DOCKER_STEPCA_INIT_DNS_NAMES: "localhost,${MAIN_HOST_IP},ca.monitoring.local"
+      DOCKER_STEPCA_INIT_PASSWORD_FILE: /run/secrets/ca_password
+    secrets: [ca_password]
+    volumes:
+      - stepca-config:/home/step
+      - stepca-certificates:/etc/step-ca
+    networks: [monitoring]
+
+secrets:
+  ca_password:
+    file: ./.ca_password
+
+volumes:
+  pg-data:
+  stepca-config:
+  stepca-certificates:
+
+networks:
+  monitoring:
+    driver: bridge

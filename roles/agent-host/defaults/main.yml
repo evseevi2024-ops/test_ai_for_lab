@@ -1,0 +1,25 @@
+---
+# roles/agent-host: переменные по умолчанию
+agent_dir: /opt/monitoring-agent
+
+# Целевое приложение: apache | nginx
+web_server: apache
+
+zabbix_server_host: "{{ lookup('env', 'MAIN_HOST_IP') | default('192.168.100.10', true) }}"
+zabbix_server_port: 10051
+zabbix_agent_hostname: "{{ inventory_hostname }}-{{ agent_host_ip | default(lookup('env', 'AGENT_HOST_IP')) }}"
+
+# SNMPv3 (ЛР 7): USM с аутентификацией SHA и приватностью AES
+snmp_user: "{{ lookup('env', 'SNMP_USER') | default('monitor', true) }}"
+snmp_auth_pass: "{{ lookup('env', 'SNMP_AUTH_PASS') }}"
+snmp_priv_pass: "{{ lookup('env', 'SNMP_PRIV_PASS') }}"
+snmp_auth_proto: SHA
+snmp_priv_proto: AES
+
+# Rsyslog TLS-клиент (ЛР 3)
+main_host_ip: "{{ lookup('env', 'MAIN_HOST_IP') | default('192.168.100.10', true) }}"
+syslog_tls_port: "{{ lookup('env', 'SYSLOG_TLS_PORT') | default(6514, true) }}"
+certs_dir: "{{ agent_dir }}/certs"
+
+# Кастомный плагин мониторинга в Docker (ЛР 4)
+custom_plugin_enabled: true

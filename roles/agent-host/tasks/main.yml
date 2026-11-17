@@ -1,0 +1,169 @@
+---
+# roles/agent-host/tasks: развёртывание компонентов подхоста
+
+- name: Create agent directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ agent_dir }}"
+    - "{{ agent_dir }}/certs"
+    - "{{ agent_dir }}/plugin"
+
+# ---------- Целевое приложение (Apache или Nginx) ----------
+- name: Install Apache (target application)
+  ansible.builtin.apt:
+    name: apache2
+    state: present
+  when: web_server == 'apache'
+
+- name: Install Nginx (target application)
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+  when: web_server == 'nginx'
+
+- name: Enable and start web server
+  ansible.builtin.systemd_service:
+    name: "{{ web_server }}"
+    state: started
+    enabled: true
+
+- name: Deploy demo page for monitoring
+  ansible.builtin.copy:
+    dest: "/var/www/html/index.html"
+    content: |
+      <html><head><title>Monitoring target {{ agent_host_ip | default(main_host_ip) }}</title></head>
+      <body><h1>Agent host is up</h1><p>Zabbix/SNMP/Syslog monitoring target.</p></body></html>
+    mode: '0644'
+
+# ---------- Zabbix Agent 2 ----------
+- name: Add Zabbix repository
+  ansible.builtin.get_url:
+    url: "https://repo.zabbix.com/zabbix/6.4/ubuntu/pool/main/z/zabbix-release/zabbix-release_6.4-1+ubuntu{{ ansible_distribution_version }}_all.deb"
+    dest: /tmp/zabbix-release.deb
+    mode: '0644'
+
+- name: Install Zabbix repository package
+  ansible.builtin.apt:
+    deb: /tmp/zabbix-release.deb
+    state: present
+
+- name: Install Zabbix Agent 2
+  ansible.builtin.apt:
+    name:
+      - zabbix-agent2
+      - zabbix-agent2-plugin-*
+    state: present
+    update_cache: true
+
+- name: Deploy zabbix_agent2.conf
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../files/zabbix_agent2.conf"
+    dest: /etc/zabbix/zabbix_agent2.conf
+    mode: '0644'
+  notify: Restart zabbix-agent2
+
+- name: Patch Server/ServerActive/Hostname in agent config
+  ansible.builtin.lineinfile:
+    path: /etc/zabbix/zabbix_agent2.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - { regexp: '^Server=',          line: "Server={{ main_host_ip }},127.0.0.1" }
+    - { regexp: '^ServerActive=',    line: "ServerActive={{ main_host_ip }}:{{ zabbix_server_port }}" }
+    - { regexp: '^Hostname=',        line: "Hostname={{ zabbix_agent_hostname }}" }
+  notify: Restart zabbix-agent2
+
+- name: Enable and start Zabbix Agent 2
+  ansible.builtin.systemd_service:
+    name: zabbix-agent2
+    state: started
+    enabled: true
+
+# ---------- SNMPd v3 с шифрованием (ЛР 7, ЛР 8) ----------
+- name: Install SNMP packages
+  ansible.builtin.apt:
+    name:
+      - snmpd
+      - snmp
+      - libsensors5
+    state: present
+
+- name: Create SNMPv3 user (auth SHA + priv AES)
+  ansible.builtin.command:
+    cmd: >
+      net-snmp-config --create-snmpv3-user -a {{ snmp_auth_pass }} -x {{ snmp_priv_pass }}
+      -A SHA -X AES -ro {{ snmp_user }}
+  args:
+    creates: /var/lib/snmp/snmpd.conf
+  notify: Restart snmpd
+
+- name: Deploy snmpd.conf
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../files/snmpd.conf"
+    dest: /etc/snmp/snmpd.conf
+    mode: '0600'
+  notify: Restart snmpd
+
+- name: Enable and start snmpd
+  ansible.builtin.systemd_service:
+    name: snmpd
+    state: started
+    enabled: true
+
+# ---------- Rsyslog TLS-клиент (ЛР 3) ----------
+- name: Ensure rsyslog-gnutls is installed
+  ansible.builtin.apt:
+    name:
+      - rsyslog
+      - rsyslog-gnutls
+    state: present
+
+- name: Copy CA and client certificates
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../certs/"
+    dest: "{{ certs_dir }}/"
+    mode: '0644'
+  failed_when: false
+
+- name: Deploy rsyslog client configuration (TLS forwarding to main host)
+  ansible.builtin.template:
+    src: rsyslog-client.conf.j2
+    dest: /etc/rsyslog.d/10-monitoring-client.conf
+    mode: '0644'
+  notify: Restart rsyslog
+
+- name: Enable and start rsyslog
+  ansible.builtin.systemd_service:
+    name: rsyslog
+    state: started
+    enabled: true
+
+# ---------- Кастомный плагин мониторинга в Docker (ЛР 4) ----------
+- name: Deploy custom Docker monitoring plugin
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../files/docker-plugin/"
+    dest: "{{ agent_dir }}/plugin/"
+    mode: '0755'
+  when: custom_plugin_enabled | bool
+
+- name: Build and run custom plugin container
+  community.docker.docker_compose_v2:
+    project_src: "{{ agent_dir }}/plugin"
+    state: present
+  when: custom_plugin_enabled | bool
+
+# ---------- Проверки готовности ----------
+- name: Wait for HTTP on port 80
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 80
+    timeout: 120
+
+- name: Wait for Zabbix Agent 2 on port 10050
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 10050
+    timeout: 120
